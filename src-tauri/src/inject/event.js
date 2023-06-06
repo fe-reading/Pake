@@ -111,11 +111,23 @@ document.addEventListener('DOMContentLoaded', () => {
   document.addEventListener('click', (e) => {
     const anchorElement = e.target.closest('a');
 
+
     if (anchorElement && anchorElement.href) {
       const target = anchorElement.target;
       anchorElement.target = '_self';
       const hrefUrl = new URL(anchorElement.href);
       const absoluteUrl = hrefUrl.href;
+      if (absoluteUrl.includes('blob:')) {
+        // convert blob url to binary file
+        converBlobUrlToBinary(absoluteUrl).then(binary => {
+          const tarui = window.__TAURI__;
+          tarui.fs.writeBinaryFile(anchorElement.download, binary, {
+            dir: tarui.fs.BaseDirectory.Download,
+          });
+
+        })
+        return;
+      }
 
       // Handling external link redirection.
       if (
@@ -129,19 +141,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // Process download links for Rust to handle.
       if (
-        /\.[a-zA-Z0-9]+$/i.test(removeUrlParameters(absoluteUrl)) &&
         !externalDownLoadLink()
       ) {
         e.preventDefault();
         invoke('download_file', {
           params: {
             url: absoluteUrl,
-            filename: getFilenameFromUrl(absoluteUrl),
+            filename: getFilenameFromUrl(absoluteUrl) || anchorElement.download,
           },
         });
       }
     }
   });
+
+  collectUrlToBlobs();
 
   // Rewrite the window.open function.
   const originalWindowOpen = window.open;
@@ -204,3 +217,27 @@ function toggleVideoPlayback(pause) {
   }
 }
 
+// Collect blob urls to blob by overriding window.URL.createObjectURL
+function collectUrlToBlobs() {
+  const backupCreateObjectURL = window.URL.createObjectURL;
+  window.blobToUrlCaches = new Map();
+  window.URL.createObjectURL = (blob) => {
+    const url = backupCreateObjectURL.call(window.URL, blob);
+    window.blobToUrlCaches.set(url, blob);
+    return url;
+  }  
+}
+
+
+function converBlobUrlToBinary(blobUrl) {
+  return new Promise((resolve) => {
+    const blob = window.blobToUrlCaches.get(blobUrl);
+    const reader = new FileReader();
+    
+    reader.readAsArrayBuffer(blob);
+    reader.onload = () => {
+      resolve(reader.result);
+    };
+  })
+  
+}
